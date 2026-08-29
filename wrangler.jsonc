@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "rollcall",
+  "account_id": "920c5240424581f9e0662ecbd8fef971",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "SUPABASE_URL": "https://qhdsbfsyxdzadlmksvkp.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_0YgboZUxGviO8QL1eQKBKg_8DTwK65u"
+  }
+}
