@@ -1,59 +1,40 @@
-# RollCall Communal Sushi Prototype
+# Order — Implementation Status and Next Phase
 
-## Summary
+## Completed locally
 
-Build a mobile-first functional prototype for one communal sushi combo. Everyone with the private link edits the same shared item list in real time. There are no participant names, personal allocations, or cost splitting.
+- React/Vite TypeScript PWA with a Cloudflare Worker entrypoint
+- Full group-ordering domain model and validation
+- Local browser gateway using `localStorage`, `sessionStorage`, and `BroadcastChannel`
+- Host start flow and nickname-based join flow
+- Personal/shared lines, quantity, instructions, participant assignments, edits, and deletion
+- Readiness and automatic readiness reset after edits
+- Participant rename/removal/reassignment and single-host transfer
+- Open, closed, reopened, and permanently placed states
+- Restaurant and per-person summaries
+- Native share, link copy, and QR code
+- Local recents, offline lock, safe areas, icons, manifest, and static-shell service worker
+- Unit tests and two-tab browser verification
 
-The prototype will use a neutral temporary interface. The final UI and branding will be applied later without changing the product logic.
+## Deferred until product review
 
-## Implementation
+1. Apply the standalone Supabase v2 migration to project `qhdsbfsyxdzadlmksvkp`.
+2. Enable anonymous authentication, confirm RLS and Realtime behavior, and run database/security advisors.
+3. Configure Cloudflare Turnstile and Worker secrets.
+4. Deploy an `order-preview` Worker in Cloudflare account `920c5240424581f9e0662ecbd8fef971`.
+5. Run a real multi-device test against preview.
+6. Promote the identical verified build to `order.magedvibecode.workers.dev`.
 
-- Scaffold a TypeScript React/Vite SPA with a Hono API on Cloudflare Workers, following Cloudflare’s current [React SPA + Worker pattern](https://developers.cloudflare.com/workers/framework-guides/web-apps/more-web-frameworks/hono/).
-- Create three simple views:
-  - Start a room: restaurant name and preset/custom combo size.
-  - Communal builder: shared items, quick counts `1`, `2`, `4`, `8`, custom quantity, live progress, copy/share link.
-  - Final order: locked restaurant-ready item summary with copy-to-clipboard.
-- Merge repeated item names case-insensitively. Support rename, increase, decrease, remove, under/exact/over states, and block finalization unless the total is exact.
-- Only the room creator can finalize. Everyone with the link can edit while the room is open.
-- Rooms expire exactly 24 hours after creation. Access stops at expiry; a scheduled Cloudflare Worker deletes expired data afterward.
-- Remember recent item names per restaurant in local browser storage for faster entry, without creating public restaurant history.
-- Keep the temporary UI semantic and token-based so the supplied design can later replace typography, spacing, colors, and component styling cleanly.
+## Deployment guardrails
 
-## Supabase and Interfaces
+- Do not modify or delete the existing deployed `rollcall` Worker during the new release.
+- Do not access or change any WSC account, app, domain, data, or configuration.
+- Do not commit environment files or private keys.
+- The public client cannot enable priced menus or bill splitting.
 
-- Create a completely separate Supabase organization/project—not the connected Wadi Sports Camp organization. Project creation will require the new organization to be connected and its cost confirmed first.
-- Use anonymous Supabase Auth, Cloudflare Turnstile abuse protection, RLS on every exposed table, and Supabase Realtime for live room updates.
-- Store:
-  - `rooms`: restaurant, combo target, status, creator, timestamps, expiry.
-  - `room_members`: anonymous user membership and host role.
-  - `order_items`: communal item name, normalized name, piece count, and ordering.
-  - Private invite-token hashes in an unexposed schema.
-- Share rooms as `/r/{slug}#token={secret}`. The Cloudflare Worker validates the secret and grants the anonymous user room membership; secrets and Supabase privileged keys never reach the public client.
-- Public Worker endpoints:
-  - `POST /api/rooms`
-  - `POST /api/rooms/:slug/join`
-- RLS-protected database functions perform atomic communal edits:
-  - `add_or_increment_item`
-  - `change_item_count`
-  - `rename_item`
-  - `remove_item`
-  - `finalize_room`
-- Realtime subscriptions refresh the shared room snapshot after changes, using Supabase’s documented [Realtime](https://supabase.com/docs/guides/realtime/getting_started) and [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security) patterns.
+## Verification before production
 
-## Test Plan
-
-- Validate restaurant names, preset/custom combo sizes, item names, and positive safe whole-number quantities.
-- Confirm duplicate names merge despite case or surrounding whitespace.
-- Test under, exact, and over totals; finalization succeeds only when exact.
-- Use two browser sessions to verify live additions, simultaneous increments without lost updates, renames, removals, and final locking.
-- Verify non-members cannot read or edit rooms, invalid links fail, members cannot access other rooms, and non-hosts cannot finalize.
-- Verify rooms become inaccessible after 24 hours and scheduled cleanup cascades through memberships and items.
-- Run unit tests, Worker API tests, database/RLS tests, production build, and mobile browser flow checks before handoff.
-
-## Assumptions
-
-- “RollCall” remains the working name.
-- English-only prototype; Arabic and RTL remain ready for a later phase.
-- Pieces only—no pricing.
-- No public history, accounts, participant tracking, restaurant-managed menus, or WSC branding/data.
-- The prototype is locally verified first; deployment is separate unless explicitly requested.
+- Type check, unit tests, build, and Worker dry run
+- Database/RLS tests for outsider, member, owner, host, removed-member, status, expiry, and 100-person limits
+- Three isolated browser sessions with concurrent edits and Realtime refresh
+- Host moderation, transfer, close/reopen/place, and both summary modes
+- iPhone/Android installation, safe areas, keyboard behavior, accessibility, offline state, and mobile performance

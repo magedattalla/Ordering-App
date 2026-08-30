@@ -9,7 +9,7 @@
     "check": "tsc -b --pretty false",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "cf:types": "wrangler types",
+    "cf:types": "wrangler types src/worker/worker-configuration.d.ts",
     "cf:check": "wrangler deploy --dry-run"
   },
   "engines": {

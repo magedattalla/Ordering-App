@@ -1,77 +1,74 @@
-# RollCall — Design Brief
+# Order — Design Brief
 
-## The product
+## Direction
 
-One group, one table, one sushi combo. Someone starts a room, shares a private link, and everyone at the table builds a single shared order on their own phone until the piece count hits the combo size exactly. Then the host locks it and reads it out to the restaurant.
+Order should feel like a thoughtful native iOS utility: immediate, calm, rounded, and finished. It is not a restaurant brand and should not borrow the visual language of any cuisine. The interface must work just as naturally for office coffee, a team lunch, takeaway with friends, or a large drinks order.
 
-There is no splitting, no per-person allocation, no prices, no accounts. Everyone edits one common list.
+The temporary “Order” label and icon are placeholders. Branding must remain isolated from product structure.
 
-## The one job
+## Context
 
-Get a group of people to land on an exact number, together, in under two minutes, at a table, on phones.
+People use this one-handed while talking, switching apps, and checking a menu. Most have never used it before. Joining and adding an item should be obvious without instructions.
 
-The whole product is a number racing toward a target. Under is neutral. Over is a problem. Exact is the win, and it is the only state that unlocks finishing.
+Primary mobile target: 390px wide, including iPhone safe areas and standalone PWA mode.
 
-## Who and where
+## Visual principles
 
-Three to eight people at a restaurant table. Dim light, one hand, phone held low under the table edge, someone is talking to them while they tap. Half the group joins by tapping a link in a group chat. Nobody signs up, nobody has used it before, and nobody will read instructions.
+- Rounded iOS-style controls and surfaces, with radius chosen by component size rather than one radius everywhere.
+- Apple system typography and native-feeling weight, spacing, and control density.
+- Clear hierarchy with one obvious primary action per moment.
+- Large touch targets, 16px inputs, strong focus states, and WCAG AA contrast.
+- Restrained motion. Use motion only for state changes that benefit from it.
+- Soft depth and blur may support hierarchy, but content must stay legible and surfaces must not become decorative noise.
+- Layouts must use logical properties and remain ready for Arabic and RTL.
 
-## Screens to design
+## Screens
 
-**1. Start a room.** Restaurant name, combo size (presets 15/20/30/40/50/60/70/80/100, plus Custom which reveals a number field), one primary action. Current copy: eyebrow "One table. One combo.", headline "Hit the combo exactly.", support line, and fine print "Rooms stay private and expire after 24 hours."
+### Start
 
-**2. Quick verification.** Someone opening a shared link may hit a bot-check step first — a single CAPTCHA widget on an otherwise near-empty screen. Eyebrow "Private room", headline "Quick verification."
+Host nickname, restaurant/vendor, optional title, optional deadline, and one primary “Start order” action. Explain privacy and the 24-hour lifespan in one short line.
 
-**3. The builder.** The main screen, where all the time is spent:
-- Room header: restaurant name, and a Copy link action
-- Progress block: the running total against the combo size, a progress bar, and a status line ("6 pieces left." / "1 piece to remove." / "Combo complete.")
-- Add form: item name field (with a suggestion list of recent items for that restaurant), quick-count buttons 1 / 2 / 4 / 8, a custom number field, and an Add action
-- The order: a list of item rows, each with name, an inline rename affordance, − and + controls, the piece count, and a Remove action. Empty state when nothing has been added.
-- Finish: a full-width Finish order action, disabled unless the total is exact. Non-hosts see a note instead, because only the room creator can finalize.
+### Join
 
-**4. Final order.** The room is locked. All editing disappears. A confirmation card with the locked total and a Copy order action that yields restaurant-ready plain text.
+A minimal invite screen asking for a unique temporary nickname. Turnstile appears here only when enabled.
 
-## Every state that needs a design
+### Live order
 
-- Progress: **under**, **exact**, **over** — three visually distinct treatments of the same block
-- Item row: default, being renamed, and read-only (after the room is locked)
-- List: empty, one item, many items, and a very long item name that must truncate
-- Finish: disabled (under or over), enabled (exact), and the non-host variant
-- Global: loading a room, an error/notice banner with a dismiss, an expired room, an invalid link
-- A "Prototype mode" badge appears in the header while the app runs without a backend
+- Fixed app header with brand, live/offline status, and local prototype badge when relevant.
+- Order title/vendor, status, deadline warning, and share action.
+- Readiness card with current participants and “I’m done.”
+- Segmented navigation for Order, People, and Summary.
+- Item composer with item, quantity stepper, instructions, and participant assignment chips.
+- Item cards showing quantity, instructions, ownership, and edit/remove controls.
+- Sticky host controls for close/reopen/place.
 
-## Constraints
+### People
 
-- **Mobile-first and thumb-first.** Design at 390px. Everything reachable one-handed. Minimum 44px touch targets — the − and + get tapped repeatedly and in a hurry.
-- **Inputs must render at 16px** or iOS zooms the page on focus.
-- **Light and dark**, since this gets used in dim restaurants.
-- **WCAG AA contrast.** The over state cannot rely on red alone; the exact state cannot rely on green alone.
-- **English now, Arabic and RTL later.** Nothing should depend on left-to-right order or have text baked into graphics.
-- **The logic is finished and must not change.** Deliver a visual system that drops onto the existing structure: same screens, same states, same actions.
+Participant readiness, host indicator, rename, removal/reassignment, and host transfer. Destructive actions should be explicit but not visually dominant.
 
-## Explicitly out of scope
+### Summary
 
-No prices or totals in currency. No participant names, avatars, or "who added what". No per-person allocation. No accounts, profiles, or order history. No restaurant menus or branding. Rooms vanish after 24 hours by design.
+Restaurant and person modes, optimized for scanning and copying. Instructions should never be visually confused with item names.
 
-## What I need back
+### Share sheet
 
-1. A token set — color (including both themes), type scale, spacing, radii, motion — to replace the current hardcoded values.
-2. The four screens at 390px.
-3. Component specs with all states listed above: buttons (primary / secondary / text / quantity / count-chip), input, select, item row, progress block, notice banner, final card.
-4. The finalize moment: what changes on screen when a group hits exact and locks it in.
+Native share, link copy, and a large scannable QR code. Clearly state that the link is private.
 
-## Open design questions
+## Required states
 
-These are unresolved in the prototype, and the answers will shape the design more than anything else:
+- Loading, empty, error, invalid link, expired room
+- Online, reconnecting, and offline; offline changes are disabled and never queued
+- Open, closed, and placed
+- Ready/not ready
+- Host/member and editable/read-only item
+- Deadline upcoming and passed
+- Installable/standalone safe-area behavior
 
-1. **Remote changes are currently silent.** When someone else adds an item, the list just changes under your thumb. How should another person's edit announce itself without stealing focus mid-tap?
-2. **Exact is the emotional payoff** and right now it is a color change and a line of text. What should hitting the number feel like?
-3. **Over needs to guide, not just scold.** "1 piece to remove" does not tell you what to remove. Should the design point at a candidate?
-4. **Hero on a small screen** — the big number, or the list? They compete for the top of the viewport, and the list grows.
-5. **Copy link is the entire sharing mechanic** but currently sits as a small secondary button in the header. Does it need a moment of its own before the first item is added?
+## Accessibility and PWA
 
-## Implementation notes for handoff
-
-- React SPA. Markup is semantic with stable class names (`.progress-section.is-exact`, `.item-row`, `.count-button.selected`, `.final-card`, and so on), so styling can be replaced without touching logic.
-- Colors are currently hardcoded hex literals in one stylesheet, not tokens. Part of this work is introducing the token layer.
-- Live-updating regions already use `aria-live`; keep those announcements meaningful.
+- Semantic labels and meaningful live regions
+- Minimum 44px targets
+- Reduced-motion support
+- Keyboard-visible focus
+- Versioned static-shell service worker that never caches API responses, room data, invite tokens, or Supabase traffic
+- Replaceable manifest icons and Apple touch icon

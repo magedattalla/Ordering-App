@@ -36,4 +36,4 @@ npm run build
 
 ## Deferred connection phase
 
-The additive migration is in `supabase/migrations/20260830003000_create_group_orders_v2.sql`. Do not apply it until the local prototype has been reviewed. The legacy RollCall migration and deployed Worker remain untouched.
+The standalone schema is in `supabase/migrations/20260830003000_create_group_orders_v2.sql`. Do not apply it until the local prototype has been reviewed. See `PRODUCT_BRIEF.md`, `DESIGN_BRIEF.md`, and `PLAN.md` for the current source of truth.

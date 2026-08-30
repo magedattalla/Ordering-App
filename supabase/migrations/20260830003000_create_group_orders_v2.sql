@@ -1,3 +1,7 @@
+create extension if not exists pgcrypto;
+create schema if not exists private;
+revoke all on schema private from public;
+
 create type public.group_order_status as enum ('open', 'closed', 'placed');
 create type public.group_order_role as enum ('host', 'member');
 create type public.order_option_kind as enum ('variant', 'addition', 'removal');

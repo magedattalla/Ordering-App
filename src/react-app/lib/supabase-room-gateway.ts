@@ -26,12 +26,12 @@ export class SupabaseOrderGateway implements OrderGateway {
   static fromEnvironment() { if (!configured) throw new Error("Supabase is not configured."); return new SupabaseOrderGateway(configured); }
 
   async create(input: CreateOrderInput, captchaToken?: string): Promise<CreatedOrder> {
-    await this.ensureSession();
+    await this.ensureSession(captchaToken);
     const result = await this.request("/api/rooms", { method: "POST", body: JSON.stringify({ hostNickname: assertNickname(input.hostNickname), vendorName: assertVendorName(input.vendorName), title: assertOrderTitle(input.title ?? "") || undefined, deadlineAt: assertDeadline(input.deadlineAt), turnstileToken: captchaToken }) }) as { room: unknown; inviteToken: string };
     const snapshot = parseSnapshot(result.room); return { snapshot, shareUrl: `${location.origin}/r/${snapshot.slug}#token=${result.inviteToken}` };
   }
   async open(slug: string, inviteToken?: string, nickname?: string, captchaToken?: string) {
-    await this.ensureSession();
+    await this.ensureSession(captchaToken);
     if (inviteToken && nickname) await this.request(`/api/rooms/${encodeURIComponent(slug)}/join`, { method: "POST", body: JSON.stringify({ inviteToken, nickname: assertNickname(nickname), turnstileToken: captchaToken }) });
     return this.snapshot(slug);
   }
@@ -53,6 +53,6 @@ export class SupabaseOrderGateway implements OrderGateway {
   }
   private async snapshot(slug: string) { return parseSnapshot(((await this.request(`/api/rooms/${encodeURIComponent(slug)}`)) as { room: unknown }).room); }
   private async mutate(path: string, method: string, body?: unknown) { return parseSnapshot(((await this.request(path, { method, body: body === undefined ? undefined : JSON.stringify(body) })) as { room: unknown }).room); }
-  private async ensureSession() { const existing = await this.client.auth.getSession(); if (existing.data.session) return existing.data.session; const result = await this.client.auth.signInAnonymously(); if (result.error || !result.data.session) throw new Error(result.error?.message ?? "Could not start a private session."); return result.data.session; }
+  private async ensureSession(captchaToken?: string) { const existing = await this.client.auth.getSession(); if (existing.data.session) return existing.data.session; const result = await this.client.auth.signInAnonymously(captchaToken ? { options: { captchaToken } } : undefined); if (result.error || !result.data.session) throw new Error(result.error?.message ?? "Could not start a private session."); return result.data.session; }
   private async request(path: string, init: RequestInit = {}) { const { data } = await this.client.auth.getSession(); if (!data.session?.access_token) throw new Error("Your private session expired."); const response = await fetch(`${this.apiBaseUrl}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}`, ...init.headers } }); const body = await response.json().catch(() => ({})) as ApiError; if (!response.ok) throw new Error(body.error ?? "Something went wrong. Try again."); return body; }
 }
