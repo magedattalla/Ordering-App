@@ -1,174 +1,92 @@
-import {
-  assertItemName,
-  assertPieceCount,
-  assertRestaurantName,
-  calculateTotal,
-  normalizeItemName,
-  type CreateRoomInput,
-  type RoomItem,
-  type RoomSnapshot,
-} from "../../shared/domain";
-import type { CreatedRoom, RoomGateway } from "./room-gateway";
+import { assertAssignments, assertDeadline, assertInstructions, assertItemName, assertNickname, assertOrderTitle, assertQuantity, assertVendorName, MAX_PARTICIPANTS, nextOrderStatus, normalizeName, ROOM_LIFETIME_MS, transferHostRole, type AddLineInput, type CreateOrderInput, type EditLineInput, type OrderSnapshot, type OrderStatus } from "../../shared/domain";
+import type { CreatedOrder, OrderGateway } from "./room-gateway";
 
-type StoredRoom = RoomSnapshot & { inviteToken: string };
-type StoredRooms = Record<string, StoredRoom>;
+type StoredOrder = OrderSnapshot & { inviteToken: string };
+type StoredOrders = Record<string, StoredOrder>;
+const storageKey = "order:v2:prototype-orders";
+const actorKey = "order:v2:local-actor";
+const channelName = "order:v2:events";
+const readOrders = (): StoredOrders => { try { return JSON.parse(localStorage.getItem(storageKey) ?? "{}"); } catch { return {}; } };
+const writeOrders = (orders: StoredOrders) => localStorage.setItem(storageKey, JSON.stringify(orders));
+const actorId = () => { let id = sessionStorage.getItem(actorKey); if (!id) { id = crypto.randomUUID(); sessionStorage.setItem(actorKey, id); } return id; };
+const token = () => { const bytes = new Uint8Array(24); crypto.getRandomValues(bytes); return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""); };
 
-const storageKey = "rollcall:prototype-rooms";
-const channelName = "rollcall:prototype-room-events";
-
-const readRooms = (): StoredRooms => {
-  try {
-    return JSON.parse(localStorage.getItem(storageKey) ?? "{}") as StoredRooms;
-  } catch {
-    return {};
-  }
-};
-
-const writeRooms = (rooms: StoredRooms) => localStorage.setItem(storageKey, JSON.stringify(rooms));
-
-const randomToken = () => {
-  const values = new Uint8Array(24);
-  crypto.getRandomValues(values);
-  return btoa(String.fromCharCode(...values)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-};
-
-const throwIfExpired = (room: StoredRoom) => {
-  if (Date.parse(room.expiresAt) <= Date.now()) {
-    throw new Error("This room expired after 24 hours.");
-  }
-};
-
-export class LocalRoomGateway implements RoomGateway {
+export class LocalOrderGateway implements OrderGateway {
   readonly mode = "local" as const;
   private readonly channel = new BroadcastChannel(channelName);
 
-  async create(input: CreateRoomInput): Promise<CreatedRoom> {
-    const restaurantName = assertRestaurantName(input.restaurantName);
-    const comboSize = assertPieceCount(input.comboSize);
-    const slug = crypto.randomUUID().replaceAll("-", "").slice(0, 10);
-    const inviteToken = randomToken();
-    const room: StoredRoom = {
-      id: crypto.randomUUID(),
-      slug,
-      restaurantName,
-      comboSize,
-      status: "open",
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      isHost: true,
-      items: [],
-      inviteToken,
+  async create(input: CreateOrderInput): Promise<CreatedOrder> {
+    const now = Date.now(); const userId = actorId(); const participantId = crypto.randomUUID();
+    const slug = crypto.randomUUID().replaceAll("-", "").slice(0, 12); const inviteToken = token();
+    const order: StoredOrder = {
+      id: crypto.randomUUID(), slug, inviteToken, vendorName: assertVendorName(input.vendorName), title: assertOrderTitle(input.title ?? "") || null,
+      status: "open", deadlineAt: assertDeadline(input.deadlineAt, now) ?? null, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + ROOM_LIFETIME_MS).toISOString(),
+      currentParticipantId: participantId, isHost: true, capabilities: { pricedMenu: false }, lines: [], participants: [
+        { id: participantId, nickname: assertNickname(input.hostNickname), role: "host", isReady: false, joinedAt: new Date(now).toISOString(), isCurrentUser: true },
+      ],
     };
-    const rooms = readRooms();
-    rooms[slug] = room;
-    writeRooms(rooms);
-    this.publish(slug);
-    return { snapshot: this.publicRoom(room), shareUrl: this.shareUrl(slug, inviteToken) };
+    sessionStorage.setItem(`order:v2:membership:${slug}`, `${userId}:${participantId}`);
+    const orders = readOrders(); orders[slug] = order; writeOrders(orders); this.publish(slug);
+    return { snapshot: this.publicOrder(order), shareUrl: `${location.origin}/r/${slug}#token=${inviteToken}` };
   }
 
-  async open(slug: string, inviteToken?: string): Promise<RoomSnapshot> {
-    const room = readRooms()[slug];
-    if (!room) throw new Error("This prototype room is only available in the browser that created it.");
-    throwIfExpired(room);
-    if (inviteToken && inviteToken !== room.inviteToken) throw new Error("That room link is invalid.");
-    return this.publicRoom(room);
+  async open(slug: string, inviteToken?: string, nickname?: string) {
+    const orders = readOrders(); const order = orders[slug]; this.assertActive(order);
+    if (inviteToken && inviteToken !== order.inviteToken) throw new Error("That private order link is invalid.");
+    const membershipKey = `order:v2:membership:${slug}`; let membership = sessionStorage.getItem(membershipKey);
+    if (!membership) {
+      if (!inviteToken) throw new Error("Open the private invite link to join this order.");
+      if (!nickname) throw new Error("Enter your nickname to join.");
+      if (order.participants.length >= MAX_PARTICIPANTS) throw new Error("This order already has 100 people.");
+      const normalized = normalizeName(assertNickname(nickname));
+      if (order.participants.some((person) => normalizeName(person.nickname) === normalized)) throw new Error("That nickname is already in use.");
+      const participantId = crypto.randomUUID();
+      order.participants.push({ id: participantId, nickname: assertNickname(nickname), role: "member", isReady: false, joinedAt: new Date().toISOString(), isCurrentUser: false });
+      membership = `${actorId()}:${participantId}`; sessionStorage.setItem(membershipKey, membership); orders[slug] = order; writeOrders(orders); this.publish(slug);
+    }
+    return this.asCurrent(order, membership.split(":")[1]);
   }
 
-  async addItem(roomId: string, rawName: string, pieceCount: number): Promise<RoomSnapshot> {
-    const name = assertItemName(rawName);
-    const count = assertPieceCount(pieceCount);
-    return this.updateById(roomId, (room) => {
-      this.assertOpen(room);
-      const normalized = normalizeItemName(name);
-      const existing = room.items.find((item) => normalizeItemName(item.name) === normalized);
-      if (existing) existing.pieceCount += count;
-      else room.items.push({ id: crypto.randomUUID(), name, pieceCount: count, sortOrder: room.items.length + 1 });
-    });
-  }
+  addLine(orderId: string, input: AddLineInput) { return this.update(orderId, (order, me) => {
+    this.assertOpen(order); const participantIds = this.validAssignments(order, input.participantIds);
+    order.lines.push({ id: crypto.randomUUID(), itemName: assertItemName(input.itemName), quantity: assertQuantity(input.quantity), instructions: assertInstructions(input.instructions ?? ""), creatorParticipantId: me.id, participantIds, sortOrder: order.lines.length + 1, options: [], canEdit: true });
+    me.isReady = false;
+  }); }
+  editLine(orderId: string, input: EditLineInput) { return this.update(orderId, (order, me) => {
+    this.assertOpen(order); const line = this.editableLine(order, input.lineId, me.id); line.itemName = assertItemName(input.itemName); line.quantity = assertQuantity(input.quantity); line.instructions = assertInstructions(input.instructions ?? ""); line.participantIds = this.validAssignments(order, input.participantIds); me.isReady = false;
+  }); }
+  removeLine(orderId: string, lineId: string) { return this.update(orderId, (order, me) => { this.assertOpen(order); this.editableLine(order, lineId, me.id); order.lines = order.lines.filter((line) => line.id !== lineId); me.isReady = false; }); }
+  setReady(orderId: string, isReady: boolean) { return this.update(orderId, (order, me) => { this.assertOpen(order); me.isReady = isReady; }); }
+  renameParticipant(orderId: string, participantId: string, nickname: string) { return this.update(orderId, (order, me) => {
+    if (!me || (me.role !== "host" && me.id !== participantId)) throw new Error("Only the host can rename other people."); const person = this.person(order, participantId); const name = assertNickname(nickname);
+    if (order.participants.some((p) => p.id !== participantId && normalizeName(p.nickname) === normalizeName(name))) throw new Error("That nickname is already in use."); person.nickname = name;
+  }); }
+  removeParticipant(orderId: string, participantId: string, reassignToParticipantId?: string) { return this.update(orderId, (order, me) => {
+    this.host(me); const person = this.person(order, participantId); if (person.role === "host") throw new Error("Transfer host control before removing the host.");
+    if (reassignToParticipantId) this.person(order, reassignToParticipantId);
+    order.lines = order.lines.flatMap((line) => {
+      if (!line.participantIds.includes(participantId)) return [line];
+      const ids = line.participantIds.filter((id) => id !== participantId); if (reassignToParticipantId) ids.push(reassignToParticipantId);
+      if (!ids.length && line.creatorParticipantId === participantId) return [];
+      return [{ ...line, creatorParticipantId: line.creatorParticipantId === participantId ? (reassignToParticipantId ?? me.id) : line.creatorParticipantId, participantIds: [...new Set(ids)] }];
+    }); order.participants = order.participants.filter((p) => p.id !== participantId);
+  }); }
+  transferHost(orderId: string, participantId: string) { return this.update(orderId, (order, me) => { this.host(me); order.participants = transferHostRole(order.participants, me.id, participantId); }); }
+  setStatus(orderId: string, status: OrderStatus) { return this.update(orderId, (order, me) => { this.host(me); order.status = nextOrderStatus(order.status, status); }); }
+  subscribe(snapshot: OrderSnapshot, onChange: () => void) { const listener = (event: MessageEvent<{slug:string}>) => { if (event.data.slug === snapshot.slug) onChange(); }; this.channel.addEventListener("message", listener); return () => this.channel.removeEventListener("message", listener); }
 
-  async changeItem(roomId: string, itemId: string, delta: number): Promise<RoomSnapshot> {
-    if (!Number.isSafeInteger(delta) || delta === 0) throw new Error("Choose a valid change.");
-    return this.updateById(roomId, (room) => {
-      this.assertOpen(room);
-      const item = room.items.find((candidate) => candidate.id === itemId);
-      if (!item) throw new Error("That item no longer exists.");
-      item.pieceCount += delta;
-      if (item.pieceCount <= 0) room.items = room.items.filter((candidate) => candidate.id !== itemId);
-    });
+  private async update(orderId: string, fn: (order: StoredOrder, me: StoredOrder["participants"][number]) => void) {
+    const orders = readOrders(); const order = Object.values(orders).find((candidate) => candidate.id === orderId); this.assertActive(order);
+    const membership = sessionStorage.getItem(`order:v2:membership:${order.slug}`); const me = order.participants.find((p) => p.id === membership?.split(":")[1]); if (!me) throw new Error("You no longer have access to this order.");
+    fn(order, me); orders[order.slug] = order; writeOrders(orders); this.publish(order.slug); return this.asCurrent(order, me.id);
   }
-
-  async renameItem(roomId: string, itemId: string, rawName: string): Promise<RoomSnapshot> {
-    const name = assertItemName(rawName);
-    return this.updateById(roomId, (room) => {
-      this.assertOpen(room);
-      const item = room.items.find((candidate) => candidate.id === itemId);
-      if (!item) throw new Error("That item no longer exists.");
-      const sameName = room.items.find(
-        (candidate) => candidate.id !== itemId && normalizeItemName(candidate.name) === normalizeItemName(name),
-      );
-      if (sameName) {
-        sameName.pieceCount += item.pieceCount;
-        room.items = room.items.filter((candidate) => candidate.id !== itemId);
-      } else item.name = name;
-    });
-  }
-
-  async removeItem(roomId: string, itemId: string): Promise<RoomSnapshot> {
-    return this.updateById(roomId, (room) => {
-      this.assertOpen(room);
-      room.items = room.items.filter((item) => item.id !== itemId);
-    });
-  }
-
-  async finalize(roomId: string): Promise<RoomSnapshot> {
-    return this.updateById(roomId, (room) => {
-      this.assertOpen(room);
-      if (!room.isHost) throw new Error("Only the room creator can finish the order.");
-      if (calculateTotal(room.items) !== room.comboSize) throw new Error("The combo must be exact before finishing.");
-      room.status = "final";
-    });
-  }
-
-  subscribe(snapshot: RoomSnapshot, onChange: () => void) {
-    const onMessage = (event: MessageEvent<{ slug: string }>) => {
-      if (event.data.slug === snapshot.slug) onChange();
-    };
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === storageKey) onChange();
-    };
-    this.channel.addEventListener("message", onMessage);
-    window.addEventListener("storage", onStorage);
-    return () => {
-      this.channel.removeEventListener("message", onMessage);
-      window.removeEventListener("storage", onStorage);
-    };
-  }
-
-  private async updateById(roomId: string, update: (room: StoredRoom) => void) {
-    const rooms = readRooms();
-    const room = Object.values(rooms).find((candidate) => candidate.id === roomId);
-    if (!room) throw new Error("This room was not found.");
-    throwIfExpired(room);
-    update(room);
-    rooms[room.slug] = room;
-    writeRooms(rooms);
-    this.publish(room.slug);
-    return this.publicRoom(room);
-  }
-
-  private assertOpen(room: StoredRoom) {
-    if (room.status !== "open") throw new Error("This order is already final.");
-  }
-
-  private publish(slug: string) {
-    this.channel.postMessage({ slug });
-  }
-
-  private publicRoom(room: StoredRoom): RoomSnapshot {
-    const { inviteToken: _inviteToken, ...snapshot } = room;
-    return snapshot;
-  }
-
-  private shareUrl(slug: string, inviteToken: string) {
-    return `${window.location.origin}/r/${slug}#token=${inviteToken}`;
-  }
+  private assertActive(order?: StoredOrder): asserts order is StoredOrder { if (!order) throw new Error("This order was not found."); if (Date.parse(order.expiresAt) <= Date.now()) throw new Error("This order expired after 24 hours."); }
+  private assertOpen(order: StoredOrder) { if (order.status !== "open") throw new Error(order.status === "placed" ? "This order has been placed." : "This order is closed for edits."); }
+  private host(person: StoredOrder["participants"][number]) { if (person.role !== "host") throw new Error("Only the host can do that."); }
+  private person(order: StoredOrder, id: string) { const person = order.participants.find((p) => p.id === id); if (!person) throw new Error("That person is no longer in the order."); return person; }
+  private validAssignments(order: StoredOrder, ids: string[]) { const unique = assertAssignments(ids); unique.forEach((id) => this.person(order, id)); return unique; }
+  private editableLine(order: StoredOrder, id: string, me: string) { const line = order.lines.find((candidate) => candidate.id === id); if (!line) throw new Error("That item no longer exists."); const host = this.person(order, me).role === "host"; if (!host && line.creatorParticipantId !== me && !line.participantIds.includes(me)) throw new Error("You cannot edit that item."); return line; }
+  private asCurrent(order: StoredOrder, id: string): OrderSnapshot { const snapshot = this.publicOrder(order); snapshot.currentParticipantId = id; snapshot.isHost = snapshot.participants.find((p) => p.id === id)?.role === "host"; snapshot.participants = snapshot.participants.map((p) => ({ ...p, isCurrentUser: p.id === id })); snapshot.lines = snapshot.lines.map((line) => ({ ...line, canEdit: snapshot.isHost || line.creatorParticipantId === id || line.participantIds.includes(id) })); return snapshot; }
+  private publicOrder(order: StoredOrder): OrderSnapshot { const { inviteToken: _token, ...snapshot } = structuredClone(order); return snapshot; }
+  private publish(slug: string) { this.channel.postMessage({ slug }); }
 }

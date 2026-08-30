@@ -1,9 +1,9 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "rollcall",
+  "name": "order",
   "account_id": "920c5240424581f9e0662ecbd8fef971",
   "main": "src/worker/index.ts",
-  "compatibility_date": "2026-08-29",
+  "compatibility_date": "2026-08-30",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "not_found_handling": "single-page-application",

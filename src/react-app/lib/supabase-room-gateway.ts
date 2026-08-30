@@ -1,182 +1,58 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
-import {
-  assertItemName,
-  assertPieceCount,
-  assertRestaurantName,
-  type CreateRoomInput,
-  type RoomSnapshot,
-} from "../../shared/domain";
-import type { CreatedRoom, RoomGateway } from "./room-gateway";
+import { assertAssignments, assertDeadline, assertInstructions, assertItemName, assertNickname, assertOrderTitle, assertQuantity, assertVendorName, type AddLineInput, type CreateOrderInput, type EditLineInput, type OrderSnapshot, type OrderStatus } from "../../shared/domain";
+import type { CreatedOrder, OrderGateway } from "./room-gateway";
 
+type RemoteConfig = { url: string; publishableKey: string; apiBaseUrl: string };
 type ApiError = { error?: string };
-
-type RemoteConfig = {
-  url: string;
-  publishableKey: string;
-  apiBaseUrl: string;
-};
-
 const config = (): RemoteConfig | null => {
-  const url = import.meta.env.VITE_SUPABASE_URL?.trim();
-  const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
-  if (!url || !publishableKey) return null;
-  return { url, publishableKey, apiBaseUrl: import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "" };
+  const url = import.meta.env.VITE_SUPABASE_URL?.trim(); const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
+  return url && publishableKey ? { url, publishableKey, apiBaseUrl: import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "" } : null;
 };
-
 const configured = config();
 
-const parseSnapshot = (data: unknown): RoomSnapshot => {
-  if (!data || typeof data !== "object") throw new Error("The room response was invalid.");
-  const room = data as Record<string, unknown>;
-  if (!Array.isArray(room.items)) throw new Error("The room response was missing its items.");
-  return {
-    id: String(room.id),
-    slug: String(room.slug),
-    restaurantName: String(room.restaurantName),
-    comboSize: Number(room.comboSize),
-    status: room.status === "final" ? "final" : "open",
-    expiresAt: String(room.expiresAt),
-    isHost: Boolean(room.isHost),
-    items: room.items.map((item) => {
-      const value = item as Record<string, unknown>;
-      return {
-        id: String(value.id),
-        name: String(value.name),
-        pieceCount: Number(value.pieceCount),
-        sortOrder: Number(value.sortOrder),
-      };
-    }),
-  };
+export const parseSnapshot = (data: unknown): OrderSnapshot => {
+  if (!data || typeof data !== "object") throw new Error("The order response was invalid.");
+  const value = data as OrderSnapshot;
+  if (!Array.isArray(value.participants) || !Array.isArray(value.lines)) throw new Error("The order response was incomplete.");
+  return value;
 };
-
 export const isSupabaseConfigured = () => configured !== null;
 
-export class SupabaseRoomGateway implements RoomGateway {
+export class SupabaseOrderGateway implements OrderGateway {
   readonly mode = "remote" as const;
   private readonly client: SupabaseClient;
   private readonly apiBaseUrl: string;
+  constructor(remote: RemoteConfig) { this.client = createClient(remote.url, remote.publishableKey); this.apiBaseUrl = remote.apiBaseUrl; }
+  static fromEnvironment() { if (!configured) throw new Error("Supabase is not configured."); return new SupabaseOrderGateway(configured); }
 
-  constructor(remoteConfig: RemoteConfig) {
-    this.client = createClient(remoteConfig.url, remoteConfig.publishableKey);
-    this.apiBaseUrl = remoteConfig.apiBaseUrl;
+  async create(input: CreateOrderInput, captchaToken?: string): Promise<CreatedOrder> {
+    await this.ensureSession();
+    const result = await this.request("/api/rooms", { method: "POST", body: JSON.stringify({ hostNickname: assertNickname(input.hostNickname), vendorName: assertVendorName(input.vendorName), title: assertOrderTitle(input.title ?? "") || undefined, deadlineAt: assertDeadline(input.deadlineAt), turnstileToken: captchaToken }) }) as { room: unknown; inviteToken: string };
+    const snapshot = parseSnapshot(result.room); return { snapshot, shareUrl: `${location.origin}/r/${snapshot.slug}#token=${result.inviteToken}` };
   }
-
-  static fromEnvironment() {
-    if (!configured) throw new Error("Supabase is not configured.");
-    return new SupabaseRoomGateway(configured);
+  async open(slug: string, inviteToken?: string, nickname?: string, captchaToken?: string) {
+    await this.ensureSession();
+    if (inviteToken && nickname) await this.request(`/api/rooms/${encodeURIComponent(slug)}/join`, { method: "POST", body: JSON.stringify({ inviteToken, nickname: assertNickname(nickname), turnstileToken: captchaToken }) });
+    return this.snapshot(slug);
   }
-
-  async create(input: CreateRoomInput, captchaToken?: string): Promise<CreatedRoom> {
-    await this.ensureSession(captchaToken);
-    const result = await this.request("/api/rooms", {
-      method: "POST",
-      body: JSON.stringify({
-        restaurantName: assertRestaurantName(input.restaurantName),
-        comboSize: assertPieceCount(input.comboSize),
-      }),
-    });
-    const response = result as { room: unknown; inviteToken: string };
-    const snapshot = parseSnapshot(response.room);
-    return {
-      snapshot,
-      shareUrl: `${window.location.origin}/r/${snapshot.slug}#token=${response.inviteToken}`,
-    };
+  async addLine(orderId: string, input: AddLineInput) { return this.mutate(`/api/rooms/${orderId}/lines`, "POST", { itemName: assertItemName(input.itemName), quantity: assertQuantity(input.quantity), instructions: assertInstructions(input.instructions ?? ""), participantIds: assertAssignments(input.participantIds) }); }
+  async editLine(orderId: string, input: EditLineInput) { return this.mutate(`/api/rooms/${orderId}/lines/${input.lineId}`, "PATCH", { itemName: assertItemName(input.itemName), quantity: assertQuantity(input.quantity), instructions: assertInstructions(input.instructions ?? ""), participantIds: assertAssignments(input.participantIds) }); }
+  async removeLine(orderId: string, lineId: string) { return this.mutate(`/api/rooms/${orderId}/lines/${lineId}`, "DELETE"); }
+  async setReady(orderId: string, isReady: boolean) { return this.mutate(`/api/rooms/${orderId}/readiness`, "PUT", { isReady }); }
+  async renameParticipant(orderId: string, participantId: string, nickname: string) { return this.mutate(`/api/rooms/${orderId}/participants/${participantId}`, "PATCH", { nickname: assertNickname(nickname) }); }
+  async removeParticipant(orderId: string, participantId: string, reassignToParticipantId?: string) { return this.mutate(`/api/rooms/${orderId}/participants/${participantId}`, "DELETE", { reassignToParticipantId }); }
+  async transferHost(orderId: string, participantId: string) { return this.mutate(`/api/rooms/${orderId}/host`, "PUT", { participantId }); }
+  async setStatus(orderId: string, status: OrderStatus) { return this.mutate(`/api/rooms/${orderId}/status`, "PUT", { status }); }
+  subscribe(snapshot: OrderSnapshot, onChange: () => void) {
+    const changed = () => onChange(); const channel: RealtimeChannel = this.client.channel(`order:v2:${snapshot.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "group_orders", filter: `id=eq.${snapshot.id}` }, changed)
+      .on("postgres_changes", { event: "*", schema: "public", table: "participants", filter: `group_order_id=eq.${snapshot.id}` }, changed)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_lines", filter: `group_order_id=eq.${snapshot.id}` }, changed)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_line_participants", filter: `group_order_id=eq.${snapshot.id}` }, changed).subscribe();
+    return () => { void this.client.removeChannel(channel); };
   }
-
-  async open(slug: string, inviteToken?: string, captchaToken?: string): Promise<RoomSnapshot> {
-    await this.ensureSession(captchaToken);
-    if (inviteToken) {
-      await this.request(`/api/rooms/${encodeURIComponent(slug)}/join`, {
-        method: "POST",
-        body: JSON.stringify({ inviteToken }),
-      });
-    }
-    return this.getSnapshot(slug);
-  }
-
-  async addItem(roomId: string, rawName: string, pieceCount: number) {
-    const name = assertItemName(rawName);
-    const count = assertPieceCount(pieceCount);
-    const result = await this.request(`/api/rooms/${roomId}/items`, {
-      method: "POST",
-      body: JSON.stringify({ name, pieceCount: count }),
-    });
-    return parseSnapshot((result as { room: unknown }).room);
-  }
-
-  async changeItem(roomId: string, itemId: string, delta: number) {
-    const result = await this.request(`/api/rooms/${roomId}/items/${itemId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ action: "change", delta }),
-    });
-    return parseSnapshot((result as { room: unknown }).room);
-  }
-
-  async renameItem(roomId: string, itemId: string, rawName: string) {
-    const result = await this.request(`/api/rooms/${roomId}/items/${itemId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ action: "rename", name: assertItemName(rawName) }),
-    });
-    return parseSnapshot((result as { room: unknown }).room);
-  }
-
-  async removeItem(roomId: string, itemId: string) {
-    const result = await this.request(`/api/rooms/${roomId}/items/${itemId}`, { method: "DELETE" });
-    return parseSnapshot((result as { room: unknown }).room);
-  }
-
-  async finalize(roomId: string) {
-    const result = await this.request(`/api/rooms/${roomId}/finalize`, { method: "POST" });
-    return parseSnapshot((result as { room: unknown }).room);
-  }
-
-  subscribe(snapshot: RoomSnapshot, onChange: () => void) {
-    const onChangeEvent = () => onChange();
-    const channel: RealtimeChannel = this.client
-      .channel(`rollcall:${snapshot.id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "order_items", filter: `room_id=eq.${snapshot.id}` },
-        onChangeEvent,
-      )
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "rooms", filter: `id=eq.${snapshot.id}` }, onChangeEvent)
-      .subscribe();
-
-    return () => {
-      void this.client.removeChannel(channel);
-    };
-  }
-
-  private async getSnapshot(slug: string) {
-    const result = await this.request(`/api/rooms/${encodeURIComponent(slug)}`);
-    return parseSnapshot((result as { room: unknown }).room);
-  }
-
-  private async ensureSession(captchaToken?: string) {
-    const { data } = await this.client.auth.getSession();
-    if (data.session) return data.session;
-    const { data: signedIn, error } = await this.client.auth.signInAnonymously(
-      captchaToken ? { options: { captchaToken } } : undefined,
-    );
-    if (error || !signedIn.session) {
-      throw new Error(error?.message ?? "Could not start the private room session.");
-    }
-    return signedIn.session;
-  }
-
-  private async request(path: string, init: RequestInit = {}) {
-    const { data } = await this.client.auth.getSession();
-    if (!data.session?.access_token) throw new Error("Your private room session has expired.");
-    const response = await fetch(`${this.apiBaseUrl}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${data.session.access_token}`,
-        ...init.headers,
-      },
-    });
-    const body = (await response.json().catch(() => ({}))) as ApiError;
-    if (!response.ok) throw new Error(body.error ?? "Something went wrong. Please try again.");
-    return body;
-  }
+  private async snapshot(slug: string) { return parseSnapshot(((await this.request(`/api/rooms/${encodeURIComponent(slug)}`)) as { room: unknown }).room); }
+  private async mutate(path: string, method: string, body?: unknown) { return parseSnapshot(((await this.request(path, { method, body: body === undefined ? undefined : JSON.stringify(body) })) as { room: unknown }).room); }
+  private async ensureSession() { const existing = await this.client.auth.getSession(); if (existing.data.session) return existing.data.session; const result = await this.client.auth.signInAnonymously(); if (result.error || !result.data.session) throw new Error(result.error?.message ?? "Could not start a private session."); return result.data.session; }
+  private async request(path: string, init: RequestInit = {}) { const { data } = await this.client.auth.getSession(); if (!data.session?.access_token) throw new Error("Your private session expired."); const response = await fetch(`${this.apiBaseUrl}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}`, ...init.headers } }); const body = await response.json().catch(() => ({})) as ApiError; if (!response.ok) throw new Error(body.error ?? "Something went wrong. Try again."); return body; }
 }

@@ -1,6 +1,6 @@
-import type { RoomGateway } from "./room-gateway";
-import { LocalRoomGateway } from "./local-room-gateway";
-import { isSupabaseConfigured, SupabaseRoomGateway } from "./supabase-room-gateway";
+import type { OrderGateway } from "./room-gateway";
+import { LocalOrderGateway } from "./local-room-gateway";
+import { isSupabaseConfigured, SupabaseOrderGateway } from "./supabase-room-gateway";
 
-export const createRoomGateway = (): RoomGateway =>
-  isSupabaseConfigured() ? SupabaseRoomGateway.fromEnvironment() : new LocalRoomGateway();
+export const createOrderGateway = (): OrderGateway =>
+  isSupabaseConfigured() ? SupabaseOrderGateway.fromEnvironment() : new LocalOrderGateway();

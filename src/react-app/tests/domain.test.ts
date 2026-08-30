@@ -1,83 +1,62 @@
 import { describe, expect, it } from "vitest";
-import {
-  assertItemName,
-  assertPieceCount,
-  assertRestaurantName,
-  calculateTotal,
-  createOrderText,
-  isPositiveSafeInteger,
-  normalizeItemName,
-  pieceLabel,
-  roomState,
-  type RoomSnapshot,
-} from "../../shared/domain";
+import { allocateBill, assertAssignments, assertDeadline, assertItemName, assertNickname, assertQuantity, assertVendorName, clearParticipantReadiness, createPersonSummaryText, createRestaurantSummaryText, deadlineState, isOrderExpired, nextOrderStatus, normalizeName, readyCount, restaurantSummary, transferHostRole, type OrderSnapshot } from "../../shared/domain";
 
-const room = (items: RoomSnapshot["items"], comboSize = 20): RoomSnapshot => ({
-  id: "room-id",
-  slug: "room-slug",
-  restaurantName: "Sushi Samba",
-  comboSize,
-  status: "open",
-  expiresAt: "2026-08-30T00:00:00.000Z",
-  isHost: true,
-  items,
+const snapshot = (overrides: Partial<OrderSnapshot> = {}): OrderSnapshot => ({
+  id: "order", slug: "slug", vendorName: "Good Food", title: "Friday lunch", status: "open",
+  deadlineAt: null, createdAt: "2026-08-30T10:00:00.000Z", expiresAt: "2026-08-31T10:00:00.000Z",
+  currentParticipantId: "a", isHost: true, capabilities: { pricedMenu: false },
+  participants: [
+    { id: "a", nickname: "Maged", role: "host", isReady: true, joinedAt: "2026-08-30T10:00:00.000Z", isCurrentUser: true },
+    { id: "b", nickname: "Sara", role: "member", isReady: false, joinedAt: "2026-08-30T10:01:00.000Z", isCurrentUser: false },
+  ], lines: [], ...overrides,
 });
 
-describe("RollCall domain rules", () => {
-  it("normalizes duplicate item names safely", () => {
-    expect(normalizeItemName("  Crispy   Shrimp ")).toBe("crispy shrimp");
-    expect(assertItemName("  Crispy   Shrimp ")).toBe("Crispy Shrimp");
+describe("Order domain", () => {
+  it("normalizes and validates names", () => {
+    expect(normalizeName("  Chicken   Wrap ")).toBe("chicken wrap");
+    expect(assertNickname("  Maged ")).toBe("Maged");
+    expect(assertVendorName("  Good   Food ")).toBe("Good Food");
+    expect(assertItemName("  Iced   latte ")).toBe("Iced latte");
+    expect(() => assertQuantity(0)).toThrow("between 1 and 999");
+    expect(() => assertQuantity(1.5)).toThrow("whole number");
+    expect(assertAssignments(["a", "a", "b"])).toEqual(["a", "b"]);
   });
-
-  it("calculates under, exact, and over combo states", () => {
-    const items = [{ id: "one", name: "Philadelphia", pieceCount: 8, sortOrder: 1 }];
-    expect(calculateTotal(items)).toBe(8);
-    expect(roomState(room(items)).difference).toBe(12);
-    expect(roomState(room([{ ...items[0], pieceCount: 20 }])).isExact).toBe(true);
-    expect(roomState(room([{ ...items[0], pieceCount: 24 }])).isOver).toBe(true);
+  it("keeps deadlines inside the 24-hour room lifespan", () => {
+    const now = Date.parse("2026-08-30T10:00:00.000Z");
+    expect(assertDeadline("2026-08-30T12:00:00.000Z", now)).toBe("2026-08-30T12:00:00.000Z");
+    expect(() => assertDeadline("2026-08-31T11:00:00.000Z", now)).toThrow("within 24 hours");
+    expect(deadlineState(snapshot({ deadlineAt: "2026-08-30T09:00:00.000Z" }), now).isPast).toBe(true);
   });
-
-  it("rejects empty names", () => {
-    expect(() => assertItemName("   ")).toThrow("Enter an item name.");
+  it("tracks readiness", () => expect(readyCount(snapshot())).toBe(1));
+  it("clears readiness after an edit and transfers the single host role", () => {
+    const room = snapshot();
+    expect(clearParticipantReadiness(room.participants, "a")[0].isReady).toBe(false);
+    const transferred = transferHostRole(room.participants, "a", "b");
+    expect(transferred.filter((person) => person.role === "host").map((person) => person.id)).toEqual(["b"]);
   });
-
-  it("rejects over-long restaurant and item names", () => {
-    expect(assertRestaurantName("  Sushi   Samba ")).toBe("Sushi Samba");
-    expect(() => assertRestaurantName("  ")).toThrow("Enter the restaurant name.");
-    expect(() => assertRestaurantName("x".repeat(101))).toThrow("up to 100 characters");
-    expect(() => assertItemName("x".repeat(101))).toThrow("up to 100 characters");
+  it("enforces status transitions and exact expiry", () => {
+    expect(nextOrderStatus("open", "closed")).toBe("closed");
+    expect(nextOrderStatus("closed", "open")).toBe("open");
+    expect(nextOrderStatus("closed", "placed")).toBe("placed");
+    expect(() => nextOrderStatus("open", "placed")).toThrow("Close the order");
+    expect(() => nextOrderStatus("placed", "open")).toThrow("cannot be changed");
+    expect(isOrderExpired(snapshot({ expiresAt: "2026-08-30T10:00:00.000Z" }), Date.parse("2026-08-30T10:00:00.000Z"))).toBe(true);
   });
-
-  it("accepts only positive whole piece counts", () => {
-    expect(assertPieceCount(8)).toBe(8);
-    expect(isPositiveSafeInteger(1)).toBe(true);
-    for (const value of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(isPositiveSafeInteger(value)).toBe(false);
-      expect(() => assertPieceCount(value)).toThrow("positive whole number");
-    }
+  it("groups restaurant lines only when item, instructions, and options match", () => {
+    const base = { creatorParticipantId: "a", participantIds: ["a"], sortOrder: 1, options: [], canEdit: true };
+    const room = snapshot({ lines: [
+      { ...base, id: "1", itemName: "Burger", quantity: 1, instructions: "No onions" },
+      { ...base, id: "2", itemName: " burger ", quantity: 2, instructions: "No onions" },
+      { ...base, id: "3", itemName: "Burger", quantity: 1, instructions: "Extra sauce" },
+    ] });
+    expect(restaurantSummary(room)).toHaveLength(2);
+    expect(restaurantSummary(room)[0].quantity).toBe(3);
+    expect(createRestaurantSummaryText(room)).toContain("3 × Burger");
+    expect(createPersonSummaryText(room)).toContain("Maged ✓");
   });
-
-  it("says piece once and pieces otherwise", () => {
-    expect(pieceLabel(1)).toBe("1 piece");
-    expect(pieceLabel(0)).toBe("0 pieces");
-    expect(pieceLabel(4)).toBe("4 pieces");
-  });
-
-  it("caps progress once the combo is over target", () => {
-    const over = roomState(room([{ id: "one", name: "Toro", pieceCount: 30, sortOrder: 1 }]));
-    expect(over.progress).toBe(100);
-    expect(over.difference).toBe(-10);
-    expect(roomState(room([])).progress).toBe(0);
-    expect(calculateTotal([])).toBe(0);
-  });
-
-  it("writes a restaurant-ready order summary", () => {
-    const snapshot = room([
-      { id: "one", name: "Salmon Nigiri", pieceCount: 12, sortOrder: 1 },
-      { id: "two", name: "Tuna Roll", pieceCount: 1, sortOrder: 2 },
-    ]);
-    expect(createOrderText(snapshot)).toBe(
-      ["Sushi Samba", "13 / 20 pieces", "", "- Salmon Nigiri: 12 pieces", "- Tuna Roll: 1 piece"].join("\n"),
-    );
+  it("allocates shared lines and remainders deterministically", () => {
+    const allocation = allocateBill({ participantIds: ["b", "a", "c"], lines: [{ id: "shared", subtotalMinor: 100, participantIds: ["c", "a", "b"] }], taxMinor: 10 });
+    expect(Object.values(allocation).reduce((sum, value) => sum + value, 0)).toBe(110);
+    expect(allocation.a).toBeGreaterThanOrEqual(allocation.c);
   });
 });
