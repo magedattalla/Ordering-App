@@ -15,6 +15,7 @@ const storeToken = (slug: string, token: string) => { try { sessionStorage.setIt
 const getToken = (slug: string) => { try { return sessionStorage.getItem(shareKey(slug)) ?? undefined; } catch { return undefined; } };
 const tokenFromUrl = (url: string) => new URLSearchParams(new URL(url).hash.slice(1)).get("token") ?? undefined;
 const safeCopy = async (text: string) => { await navigator.clipboard.writeText(text); };
+const localDateTimeValue = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
 type Recents = { vendors: string[]; items: Record<string, string[]>; instructions: string[] };
 const recentsKey = "order:v2:recents";
@@ -153,11 +154,12 @@ function LoadingState() { return <div className="loading-card" aria-live="polite
 function StartOrder({ onSubmit, requiresCaptcha, captchaToken, siteKey, onCaptcha, onError }: { onSubmit: (input: CreateOrderInput) => Promise<void>; requiresCaptcha: boolean; captchaToken?: string; siteKey?: string; onCaptcha: (token: string) => void; onError: (message: string) => void }) {
   const recent = readRecents(); const [hostNickname, setHostNickname] = useState(""); const [vendorName, setVendorName] = useState(""); const [deadlineAt, setDeadlineAt] = useState(""); const [submitting, setSubmitting] = useState(false);
   const submit = async (event: FormEvent) => { event.preventDefault(); setSubmitting(true); try { await onSubmit({ hostNickname, vendorName, deadlineAt: deadlineAt ? assertDeadline(new Date(deadlineAt).toISOString()) : undefined }); } finally { setSubmitting(false); } };
+  const deadlineLabel = deadlineAt ? new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(deadlineAt)) : "Set date and time";
   return <section className="start-screen"><div className="hero"><span className="eyebrow">Group ordering, without the group chat chaos</span><h1>Start one order.<br />Add everything together.</h1><p>Share a private link and let everyone add what they want in real time.</p></div>
     <form className="glass-card form-stack" onSubmit={submit}>
       <Field label="Your nickname"><input autoComplete="nickname" value={hostNickname} onChange={(e) => setHostNickname(e.target.value)} maxLength={40} placeholder="What should everyone call you?" required /></Field>
       <Field label="Restaurant or vendor"><input list="recent-vendors" value={vendorName} onChange={(e) => setVendorName(e.target.value)} maxLength={100} placeholder="Where are you ordering from?" required /><datalist id="recent-vendors">{recent.vendors.map((vendor) => <option key={vendor} value={vendor} />)}</datalist></Field>
-      <Field label="Deadline" optional><input type="datetime-local" value={deadlineAt} min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)} max={new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 16)} onChange={(e) => setDeadlineAt(e.target.value)} /><small>A reminder only. The order stays open until you close it.</small></Field>
+      <div className="field"><span>Deadline<em>Optional</em></span><div className="deadline-control"><span className={deadlineAt ? "deadline-value selected" : "deadline-value"}>{deadlineLabel}<span aria-hidden="true">▾</span></span><input aria-label="Deadline" type="datetime-local" value={deadlineAt} min={localDateTimeValue(new Date(Date.now() + 60_000))} max={localDateTimeValue(new Date(Date.now() + 24 * 60 * 60 * 1000))} onChange={(e) => setDeadlineAt(e.target.value)} />{deadlineAt && <button type="button" className="deadline-clear" onClick={() => setDeadlineAt("")} aria-label="Remove deadline">×</button>}</div><small>A reminder only. The order stays open until you close it.</small></div>
       {requiresCaptcha && siteKey && <TurnstileWidget siteKey={siteKey} onToken={onCaptcha} onError={onError} />}
       <button className="primary-button" disabled={submitting || (requiresCaptcha && !captchaToken)}>{submitting ? "Starting…" : "Start order"}</button>
     </form><p className="privacy-note">Private link · No account · Expires after 24 hours</p></section>;
