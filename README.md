@@ -24,7 +24,7 @@ The app includes:
 - Readiness, participant management, and host transfer
 - Open, closed, reopened, and permanently placed states
 - Restaurant and per-person summaries
-- Local recents, offline locking, and installable PWA assets
+- Local recents, offline locking, mobile pull-to-refresh, and installable PWA assets
 
 Local mode is deliberately browser-only and shares between tabs in the same browser profile. The public deployment uses anonymous Supabase Auth, RLS-protected v2 tables, Realtime subscriptions with a short consistency refresh, private invite tokens, Cloudflare Turnstile, and Worker-held server secrets for real multi-device ordering.
 

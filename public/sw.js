@@ -1,4 +1,4 @@
-const SHELL_CACHE = "order-shell-v2-3";
+const SHELL_CACHE = "order-shell-v2-4";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/app-icon.svg", "/icons/app-icon-192.png", "/icons/app-icon-512.png"];
 self.addEventListener("install", (event) => { event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", (event) => { event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== SHELL_CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())); });

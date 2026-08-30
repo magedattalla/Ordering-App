@@ -1,5 +1,5 @@
 import QRCode from "qrcode";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { assertDeadline, createPersonSummaryText, createRestaurantSummaryText, deadlineState, readyCount, restaurantSummary, type AddLineInput, type CreateOrderInput, type OrderLine, type OrderSnapshot, type Participant } from "../shared/domain";
 import { TurnstileWidget } from "./components/TurnstileWidget";
 import { createOrderGateway } from "./lib/gateway";
@@ -7,6 +7,8 @@ import type { OrderGateway } from "./lib/room-gateway";
 
 type View = "order" | "people" | "summary";
 type SummaryView = "restaurant" | "person";
+const pullRefreshThreshold = 76;
+const pullRefreshMaximum = 112;
 const shareKey = (slug: string) => `order:v2:share:${slug}`;
 const route = () => { const match = location.pathname.match(/^\/r\/([^/]+)$/); return { slug: match?.[1], token: new URLSearchParams(location.hash.slice(1)).get("token") ?? undefined }; };
 const storeToken = (slug: string, token: string) => { try { sessionStorage.setItem(shareKey(slug), token); } catch { /* private browsing */ } };
@@ -33,6 +35,9 @@ export function App() {
   const [message, setMessage] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [captchaToken, setCaptchaToken] = useState<string>();
+  const [pullDistance, setPullDistance] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const pullDistanceRef = useRef(0);
   const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY?.trim();
   const requiresCaptcha = gateway.mode === "remote" && Boolean(turnstileSiteKey);
 
@@ -57,6 +62,56 @@ export function App() {
     });
   }, [gateway, online, order?.id, order?.slug]);
   useEffect(() => { if ("serviceWorker" in navigator && import.meta.env.PROD) void navigator.serviceWorker.register("/sw.js"); }, []);
+  useEffect(() => {
+    let startY = 0;
+    let tracking = false;
+    const reset = () => {
+      tracking = false;
+      pullDistanceRef.current = 0;
+      setPullDistance(0);
+    };
+    const start = (event: TouchEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const isInteractive = target?.closest("input, textarea, select, button, a, [contenteditable='true']");
+      if (refreshing || window.scrollY > 0 || event.touches.length !== 1 || isInteractive) return;
+      startY = event.touches[0].clientY;
+      tracking = true;
+    };
+    const move = (event: TouchEvent) => {
+      if (!tracking || event.touches.length !== 1) return;
+      const delta = event.touches[0].clientY - startY;
+      if (delta <= 0) {
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+        return;
+      }
+      const distance = Math.min(pullRefreshMaximum, delta * 0.55);
+      pullDistanceRef.current = distance;
+      setPullDistance(distance);
+      if (distance > 4) event.preventDefault();
+    };
+    const finish = () => {
+      if (!tracking) return;
+      tracking = false;
+      if (pullDistanceRef.current >= pullRefreshThreshold) {
+        setRefreshing(true);
+        setPullDistance(pullRefreshThreshold);
+        window.setTimeout(() => window.location.reload(), 180);
+        return;
+      }
+      reset();
+    };
+    window.addEventListener("touchstart", start, { passive: true });
+    window.addEventListener("touchmove", move, { passive: false });
+    window.addEventListener("touchend", finish, { passive: true });
+    window.addEventListener("touchcancel", reset, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", start);
+      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchend", finish);
+      window.removeEventListener("touchcancel", reset);
+    };
+  }, [refreshing]);
 
   const create = async (input: CreateOrderInput) => {
     setLoading(true); setMessage("");
@@ -73,8 +128,14 @@ export function App() {
   };
   const home = () => { history.pushState({}, "", "/"); setCurrentRoute(route()); setOrder(null); setShareUrl(""); setMessage(""); };
 
+  const pullReady = pullDistance >= pullRefreshThreshold;
+  const pullStyle = { "--pull-distance": `${pullDistance}px` } as CSSProperties;
+
   return <div className="app-shell">
     <header className="app-header"><button className="brand" onClick={home} aria-label="Start a new order"><span className="brand-mark">O</span><span>Order</span></button><div className="header-status"><span className={online ? "connection online" : "connection offline"}>{online ? "Live" : "Offline"}</span>{gateway.mode === "local" && <span className="prototype-badge">Local prototype</span>}</div></header>
+    <div className={`pull-refresh${pullDistance > 0 ? " visible" : ""}${pullReady ? " ready" : ""}${refreshing ? " refreshing" : ""}`} style={pullStyle} aria-hidden={pullDistance === 0}>
+      <span className="pull-refresh-icon">↓</span><span>{refreshing ? "Refreshing…" : pullReady ? "Release to refresh" : "Pull to refresh"}</span>
+    </div>
     <main className="page">
       {!online && <Notice text="You’re offline. Changes are disabled and will not be queued." />}
       {message && <Notice text={message} action={() => setMessage("")} />}
