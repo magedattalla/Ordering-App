@@ -1,6 +1,6 @@
-# Order — Implementation Status and Next Phase
+# Order — Implementation and Deployment Status
 
-## Completed locally
+## Completed
 
 - React/Vite TypeScript PWA with a Cloudflare Worker entrypoint
 - Full group-ordering domain model and validation
@@ -13,16 +13,22 @@
 - Restaurant and per-person summaries
 - Native share, link copy, and QR code
 - Local recents, offline lock, safe areas, icons, manifest, and static-shell service worker
-- Unit tests and two-tab browser verification
+- Unit tests, local two-tab verification, and production multi-device verification
+- Additive Supabase v2 schema with RLS, private RPCs, Realtime publication, and 24-hour cleanup
+- Anonymous Supabase sessions and private invite-token joins
+- Cloudflare Turnstile on room creation and joining
+- Encrypted Worker secrets for Supabase and Turnstile
+- Preview deployment at `https://order-preview.magedvibecode.workers.dev`
+- Production deployment at `https://order.magedvibecode.workers.dev`
+- Realtime subscriptions with a three-second consistency refresh when events are delayed
 
-## Deferred until product review
+## Verified release flow
 
-1. Apply the standalone Supabase v2 migration to project `qhdsbfsyxdzadlmksvkp`.
-2. Enable anonymous authentication, confirm RLS and Realtime behavior, and run database/security advisors.
-3. Configure Cloudflare Turnstile and Worker secrets.
-4. Deploy an `order-preview` Worker in Cloudflare account `920c5240424581f9e0662ecbd8fef971`.
-5. Run a real multi-device test against preview.
-6. Promote the identical verified build to `order.magedvibecode.workers.dev`.
+1. Applied the standalone Supabase v2 migration to project `qhdsbfsyxdzadlmksvkp` alongside the untouched legacy schema.
+2. Verified five exposed v2 tables have RLS, thirteen v2 functions exist, and four tables are in the Realtime publication.
+3. Created a hostname-restricted Turnstile widget and stored both server secrets in Cloudflare.
+4. Deployed and tested `order-preview` in two isolated browser sessions.
+5. Promoted the identical verified build to production and repeated the public create, share, join, add-item, and cross-device refresh flow.
 
 ## Deployment guardrails
 
@@ -31,10 +37,8 @@
 - Do not commit environment files or private keys.
 - The public client cannot enable priced menus or bill splitting.
 
-## Verification before production
+## Remaining release hardening
 
-- Type check, unit tests, build, and Worker dry run
-- Database/RLS tests for outsider, member, owner, host, removed-member, status, expiry, and 100-person limits
-- Three isolated browser sessions with concurrent edits and Realtime refresh
-- Host moderation, transfer, close/reopen/place, and both summary modes
-- iPhone/Android installation, safe areas, keyboard behavior, accessibility, offline state, and mobile performance
+- Expand automated database/RLS tests for outsider, removed-member, expiry, and 100-person limits.
+- Add automated browser coverage for host transfer, permanent placement, and summary copying.
+- Complete physical iPhone/Android install, keyboard, accessibility, and mobile performance checks.

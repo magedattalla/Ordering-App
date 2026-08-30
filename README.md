@@ -1,10 +1,12 @@
-# Order — local group-ordering prototype
+# Order — group-ordering PWA
 
 Order is a mobile-first group-ordering PWA for food and drinks. A host starts one private order, shares its link or QR code, and everyone adds personal or shared items in real time.
 
 The temporary name and visual branding are isolated so they can be replaced later.
 
-## Run the local prototype
+Production: [order.magedvibecode.workers.dev](https://order.magedvibecode.workers.dev)
+
+## Run locally
 
 ```bash
 npm install
@@ -13,7 +15,7 @@ npm run dev
 
 Open the local URL printed by Vite. With no Supabase variables, the app automatically uses local prototype mode.
 
-The local prototype includes:
+The app includes:
 
 - Host nickname, vendor, optional title, and optional deadline
 - Private share link and QR code
@@ -24,7 +26,7 @@ The local prototype includes:
 - Restaurant and per-person summaries
 - Local recents, offline locking, and installable PWA assets
 
-Local mode is deliberately browser-only. Sharing works between tabs in the same browser profile. True multi-device sharing starts when the reviewed prototype is connected to the additive Supabase v2 schema.
+Local mode is deliberately browser-only and shares between tabs in the same browser profile. The public deployment uses anonymous Supabase Auth, RLS-protected v2 tables, Realtime subscriptions with a short consistency refresh, private invite tokens, Cloudflare Turnstile, and Worker-held server secrets for real multi-device ordering.
 
 ## Verify
 
@@ -34,6 +36,8 @@ npm test
 npm run build
 ```
 
-## Deferred connection phase
+## Production architecture
 
-The standalone schema is in `supabase/migrations/20260830003000_create_group_orders_v2.sql`. Do not apply it until the local prototype has been reviewed. See `PRODUCT_BRIEF.md`, `DESIGN_BRIEF.md`, and `PLAN.md` for the current source of truth.
+The additive production schema is in `supabase/migrations/20260830003000_create_group_orders_v2.sql` and is applied to Supabase project `qhdsbfsyxdzadlmksvkp`. The Worker is pinned to Cloudflare account `920c5240424581f9e0662ecbd8fef971`. Secrets remain in Cloudflare encrypted storage and are never committed.
+
+See `PRODUCT_BRIEF.md`, `DESIGN_BRIEF.md`, and `PLAN.md` for the current source of truth.

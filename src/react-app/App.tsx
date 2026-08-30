@@ -48,7 +48,14 @@ export function App() {
     }).catch((error: Error) => { if (!active) return; if (secret) setNeedsNickname(true); else setMessage(error.message); }).finally(() => active && setLoading(false));
     return () => { active = false; };
   }, [currentRoute.slug, currentRoute.token, gateway]);
-  useEffect(() => { if (!order) return; return gateway.subscribe(order, () => { if (!online) return; gateway.open(order.slug).then(setOrder).catch(() => undefined); }); }, [gateway, online, order]);
+  useEffect(() => {
+    if (!order) return;
+    const subscribedOrder = order;
+    return gateway.subscribe(subscribedOrder, () => {
+      if (!online) return;
+      gateway.open(subscribedOrder.slug).then(setOrder).catch(() => undefined);
+    });
+  }, [gateway, online, order?.id, order?.slug]);
   useEffect(() => { if ("serviceWorker" in navigator && import.meta.env.PROD) void navigator.serviceWorker.register("/sw.js"); }, []);
 
   const create = async (input: CreateOrderInput) => {

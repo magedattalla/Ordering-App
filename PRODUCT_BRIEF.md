@@ -55,4 +55,4 @@ When active, shared lines divide equally, tax/tip/fees/discounts allocate propor
 
 ## Current status
 
-The full local prototype is implemented and browser-tested. Supabase connection and public deployment are a separate phase after product review.
+The functional v2 PWA is deployed at `https://order.magedvibecode.workers.dev`. The additive Supabase schema, anonymous sessions, RLS, private invite flow, Turnstile, encrypted Worker secrets, scheduled expiry cleanup, and multi-device synchronization are active. The production share flow has been verified with isolated host and guest browser sessions.
