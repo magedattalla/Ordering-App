@@ -26,7 +26,7 @@ Primary mobile target: 390px wide, including iPhone safe areas and standalone PW
 
 ### Start
 
-Host nickname, restaurant/vendor, optional title, optional deadline, and one primary “Start order” action. Explain privacy and the 24-hour lifespan in one short line.
+Host nickname, restaurant/vendor, optional deadline, and one primary “Start order” action. Explain privacy and the 24-hour lifespan in one short line.
 
 ### Join
 
@@ -35,7 +35,7 @@ A minimal invite screen asking for a unique temporary nickname. Turnstile appear
 ### Live order
 
 - Fixed app header with brand, live/offline status, and local prototype badge when relevant.
-- Order title/vendor, status, deadline warning, and share action.
+- Vendor, status, deadline warning, and share action.
 - Readiness card with current participants and “I’m done.”
 - Segmented navigation for Order, People, and Summary.
 - Item composer with item, quantity stepper, instructions, and participant assignment chips.

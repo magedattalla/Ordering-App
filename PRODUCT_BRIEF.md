@@ -12,7 +12,7 @@ Group orders are usually coordinated in a chat. Items get buried, modifications 
 
 ## Core experience
 
-1. The host enters a nickname, vendor, optional order title, and optional deadline.
+1. The host enters a nickname, vendor, and optional deadline.
 2. The host shares a private link or QR code.
 3. Each participant joins with a temporary unique nickname. No account is required.
 4. People add items with quantity, freeform additions/removals/instructions, and one or more assigned participants.

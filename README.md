@@ -17,7 +17,7 @@ Open the local URL printed by Vite. With no Supabase variables, the app automati
 
 The app includes:
 
-- Host nickname, vendor, optional title, and optional deadline
+- Host nickname, vendor, and optional deadline
 - Private share link and QR code
 - Personal and shared items with quantity and instructions
 - Live multi-tab updates through browser storage
