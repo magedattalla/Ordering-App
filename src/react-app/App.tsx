@@ -1,6 +1,7 @@
 import QRCode from "qrcode";
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ALMAZ_MENU, ALMAZ_VENDOR_NAME, findAlmazMenuItem, isAlmazEditionActive, isAlmazOrder, searchAlmazMenu, type AlmazMenuCategory } from "../shared/almaz-menu";
+import { createPortal } from "react-dom";
+import { ALMAZ_MENU, ALMAZ_VENDOR_NAME, findAlmazMenuItem, isAlmazEditionActive, isAlmazOrder, searchAlmazMenu, type AlmazMenuCategory, type AlmazMenuItem } from "../shared/almaz-menu";
 import { assertDeadline, createPersonSummaryText, createRestaurantSummaryText, deadlineState, readyCount, restaurantSummary, type AddLineInput, type CreateOrderInput, type OrderLine, type OrderSnapshot, type Participant } from "../shared/domain";
 import { TurnstileWidget } from "./components/TurnstileWidget";
 import { createOrderGateway } from "./lib/gateway";
@@ -8,6 +9,7 @@ import type { OrderGateway } from "./lib/room-gateway";
 
 type View = "order" | "people" | "summary";
 type SummaryView = "restaurant" | "person";
+type MenuSelection = { itemName: string; quantity: number };
 const pullRefreshThreshold = 76;
 const pullRefreshMaximum = 112;
 const shareKey = (slug: string) => `order:v2:share:${slug}`;
@@ -172,7 +174,7 @@ function JoinOrder({ onSubmit, loading, requiresCaptcha, captchaToken, siteKey, 
 
 function Field({ label, optional, children }: { label: string; optional?: boolean; children: React.ReactNode }) { return <label className="field"><span>{label}{optional && <em>Optional</em>}</span>{children}</label>; }
 
-function AlmazMenuPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function AlmazMenuPicker({ value, onChange, onBrowse }: { value: string; onChange: (value: string) => void; onBrowse: () => void }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const selected = findAlmazMenuItem(value);
@@ -185,7 +187,69 @@ function AlmazMenuPicker({ value, onChange }: { value: string; onChange: (value:
       {!results.length && <div className="menu-empty"><strong>No matching food</strong><span>Try another item or category.</span></div>}
       {categories.map((category) => <section key={category} className="menu-category"><h4>{category}</h4>{results.filter((item) => item.category === category).map((item) => <button type="button" role="option" aria-selected={item.name === value} className={item.name === value ? "menu-option selected" : "menu-option"} key={item.id} onPointerDown={(event) => event.preventDefault()} onClick={() => choose(item.name)}><span><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</span><em>EGP {item.priceEgp}</em></button>)}</section>)}
     </div>}
+    <button type="button" className="full-menu-trigger" onClick={onBrowse}><span>See full menu</span><span aria-hidden="true">→</span></button>
     {selected && <div className="selected-menu-item"><span><strong>{selected.name}</strong><small>{selected.category}{selected.description ? ` · ${selected.description}` : ""}</small></span><em>EGP {selected.priceEgp}</em></div>}
+  </div>;
+}
+
+function FullMenuPage({ saving, onClose, onConfirm }: { saving: boolean; onClose: () => void; onConfirm: (items: MenuSelection[]) => Promise<boolean> }) {
+  const categories = [...new Set(ALMAZ_MENU.map((item) => item.category))] as AlmazMenuCategory[];
+  const [query, setQuery] = useState("");
+  const [activeCategory, setActiveCategory] = useState<AlmazMenuCategory>(categories[0]);
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const listRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef<Partial<Record<AlmazMenuCategory, HTMLElement>>>({});
+  const results = searchAlmazMenu(query);
+  const visibleCategories = categories.filter((category) => results.some((item) => item.category === category));
+  const selectedCount = Object.values(quantities).reduce((total, quantity) => total + quantity, 0);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", closeOnEscape); };
+  }, [onClose, saving]);
+
+  const changeQuantity = (item: AlmazMenuItem, change: number) => {
+    setQuantities((current) => {
+      const quantity = Math.max(0, Math.min(99, (current[item.id] ?? 0) + change));
+      if (!quantity) { const next = { ...current }; delete next[item.id]; return next; }
+      return { ...current, [item.id]: quantity };
+    });
+  };
+  const jumpTo = (category: AlmazMenuCategory) => {
+    setQuery("");
+    setActiveCategory(category);
+    window.requestAnimationFrame(() => sectionRefs.current[category]?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+  const trackCategory = () => {
+    const list = listRef.current; if (!list || query) return;
+    const listTop = list.getBoundingClientRect().top;
+    let current = categories[0];
+    for (const category of categories) { const section = sectionRefs.current[category]; if (section && section.getBoundingClientRect().top <= listTop + 42) current = category; }
+    setActiveCategory(current);
+  };
+  const confirm = async () => {
+    const items = ALMAZ_MENU.flatMap((item) => quantities[item.id] ? [{ itemName: item.name, quantity: quantities[item.id] }] : []);
+    if (!items.length || saving) return;
+    if (await onConfirm(items)) onClose();
+  };
+
+  return <div className="full-menu-page" role="dialog" aria-modal="true" aria-labelledby="full-menu-title">
+    <header className="full-menu-header">
+      <div className="full-menu-titlebar"><button type="button" className="menu-close" onClick={onClose} disabled={saving} aria-label="Close full menu">‹</button><div><span>Almaz</span><h2 id="full-menu-title">Full menu</h2></div><span className="menu-item-count">{ALMAZ_MENU.length} items</span></div>
+      <div className="full-menu-search"><span aria-hidden="true">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search the menu" aria-label="Search full menu" /></div>
+      <nav className="menu-category-strip" aria-label="Menu categories">{categories.map((category) => <button type="button" key={category} className={!query && activeCategory === category ? "active" : ""} onClick={() => jumpTo(category)}>{category}</button>)}</nav>
+    </header>
+    <div className="full-menu-list" ref={listRef} onScroll={trackCategory}>
+      {!results.length && <div className="full-menu-empty"><span>⌕</span><strong>No matching food</strong><p>Try another item or browse a category.</p></div>}
+      {visibleCategories.map((category) => <section className="full-menu-section" key={category} ref={(node) => { sectionRefs.current[category] = node ?? undefined; }}><h3>{category}</h3><div>{results.filter((item) => item.category === category).map((item) => {
+        const quantity = quantities[item.id] ?? 0;
+        return <article className={quantity ? "full-menu-item selected" : "full-menu-item"} key={item.id}><div><strong>{item.name}</strong>{item.description && <p>{item.description}</p>}<span>EGP {item.priceEgp}</span></div>{quantity ? <div className="menu-item-stepper" aria-label={`${quantity} ${item.name} selected`}><button type="button" onClick={() => changeQuantity(item, -1)} aria-label={`Remove one ${item.name}`}>−</button><strong>{quantity}</strong><button type="button" onClick={() => changeQuantity(item, 1)} aria-label={`Add another ${item.name}`}>+</button></div> : <button type="button" className="menu-add-button" onClick={() => changeQuantity(item, 1)}>Add</button>}</article>;
+      })}</div></section>)}
+    </div>
+    <footer className="full-menu-footer"><div><strong>{selectedCount}</strong><span>{selectedCount === 1 ? "item selected" : "items selected"}</span></div><button type="button" className="primary-button" disabled={!selectedCount || saving} onClick={() => void confirm()}>{saving ? "Adding…" : "Confirm order"}</button></footer>
   </div>;
 }
 
@@ -194,6 +258,22 @@ function OrderRoom({ order, shareUrl, gateway, online, onChange, onError }: { or
   const me = order.participants.find((p) => p.id === order.currentParticipantId)!; const readiness = readyCount(order); const locked = order.status !== "open" || !online; const deadline = deadlineState(order, tick);
   useEffect(() => { const timer = setInterval(() => setTick(Date.now()), 30_000); return () => clearInterval(timer); }, []);
   const act = async (action: () => Promise<OrderSnapshot>) => { if (!online) return onError(new Error("Reconnect before making changes.")); setBusy(true); try { onChange(await action()); } catch (error) { onError(error instanceof Error ? error : new Error("Could not save that change.")); } finally { setBusy(false); } };
+  const addMenuItems = async (items: MenuSelection[]) => {
+    if (!online) { onError(new Error("Reconnect before making changes.")); return false; }
+    setBusy(true);
+    try {
+      let updated = order;
+      for (const item of items) {
+        updated = await gateway.addLine(order.id, { ...item, instructions: "", participantIds: [order.currentParticipantId] });
+        remember("item", item.itemName, order.vendorName);
+      }
+      onChange(updated);
+      return true;
+    } catch (error) {
+      onError(error instanceof Error ? error : new Error("Could not add those items."));
+      return false;
+    } finally { setBusy(false); }
+  };
   const deadlineCopy = deadline.hasDeadline ? (deadline.isPast ? "Deadline passed" : `Due ${formatRelative(deadline.remainingMs ?? 0)}`) : null;
   return <section className="room-screen">
     <div className="room-titlebar"><div><div className="room-meta"><span className={`status-pill ${order.status}`}>{order.status}</span>{deadlineCopy && <span className={deadline.isPast ? "deadline overdue" : "deadline"}>{deadlineCopy}</span>}</div><h1>{order.title || order.vendorName}</h1>{order.title && <p>{order.vendorName}</p>}</div><button className="icon-button share-button" onClick={() => setShareOpen(true)} aria-label="Share order">↗</button></div>
@@ -201,7 +281,7 @@ function OrderRoom({ order, shareUrl, gateway, online, onChange, onError }: { or
     {order.status === "closed" && <div className="locked-banner">Participant editing is paused while the host reviews the order.</div>}{order.status === "placed" && <div className="locked-banner placed">This order is placed and permanently read-only.</div>}
     <nav className="segmented" aria-label="Order views">{(["order", "people", "summary"] as View[]).map((tab) => <button key={tab} className={view === tab ? "active" : ""} onClick={() => setView(tab)}>{tab === "people" ? `People ${order.participants.length}` : tab[0].toUpperCase() + tab.slice(1)}</button>)}</nav>
     {view === "order" && <>
-      {!locked && <LineForm key={editing?.id ?? `new-${order.lines.length}`} order={order} line={editing} disabled={busy} onCancel={() => setEditing(null)} onSave={(input) => void act(async () => { const updated = editing ? await gateway.editLine(order.id, { ...input, lineId: editing.id }) : await gateway.addLine(order.id, input); remember("item", input.itemName, order.vendorName); remember("instructions", input.instructions ?? ""); setEditing(null); return updated; })} />}
+      {!locked && <LineForm key={editing?.id ?? `new-${order.lines.length}`} order={order} line={editing} disabled={busy} onCancel={() => setEditing(null)} onAddMenuItems={addMenuItems} onSave={(input) => void act(async () => { const updated = editing ? await gateway.editLine(order.id, { ...input, lineId: editing.id }) : await gateway.addLine(order.id, input); remember("item", input.itemName, order.vendorName); remember("instructions", input.instructions ?? ""); setEditing(null); return updated; })} />}
       <section className="section"><div className="section-heading"><div><h2>Everyone’s order</h2><p>{order.lines.length ? `${order.lines.length} ${order.lines.length === 1 ? "item" : "items"}` : "Waiting for the first item"}</p></div></div>
         {!order.lines.length ? <EmptyState icon="＋" title="Nothing here yet" copy={locked ? "No items were added." : "Add your first item above."} /> : <div className="line-list">{order.lines.map((line) => <LineCard key={line.id} line={line} participants={order.participants} locked={locked} onEdit={() => setEditing(line)} onRemove={() => void act(() => gateway.removeLine(order.id, line.id))} />)}</div>}
       </section></>}
@@ -212,12 +292,12 @@ function OrderRoom({ order, shareUrl, gateway, online, onChange, onError }: { or
   </section>;
 }
 
-function LineForm({ order, line, disabled, onSave, onCancel }: { order: OrderSnapshot; line: OrderLine | null; disabled: boolean; onSave: (input: AddLineInput) => void; onCancel: () => void }) {
-  const recent = readRecents(); const [itemName, setItemName] = useState(line?.itemName ?? ""); const [quantity, setQuantity] = useState(line?.quantity ?? 1); const [instructions, setInstructions] = useState(line?.instructions ?? ""); const [assigned, setAssigned] = useState<string[]>(line?.participantIds ?? [order.currentParticipantId]);
+function LineForm({ order, line, disabled, onSave, onCancel, onAddMenuItems }: { order: OrderSnapshot; line: OrderLine | null; disabled: boolean; onSave: (input: AddLineInput) => void; onCancel: () => void; onAddMenuItems: (items: MenuSelection[]) => Promise<boolean> }) {
+  const recent = readRecents(); const [itemName, setItemName] = useState(line?.itemName ?? ""); const [quantity, setQuantity] = useState(line?.quantity ?? 1); const [instructions, setInstructions] = useState(line?.instructions ?? ""); const [assigned, setAssigned] = useState<string[]>(line?.participantIds ?? [order.currentParticipantId]); const [fullMenuOpen, setFullMenuOpen] = useState(false);
   const almazOrder = isAlmazOrder(order.vendorName); const selectedMenuItem = almazOrder ? findAlmazMenuItem(itemName) : undefined;
   useEffect(() => { setItemName(line?.itemName ?? ""); setQuantity(line?.quantity ?? 1); setInstructions(line?.instructions ?? ""); setAssigned(line?.participantIds ?? [order.currentParticipantId]); }, [line, order.currentParticipantId]);
   const toggle = (id: string) => setAssigned((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
-  return <form className="composer glass-card" onSubmit={(e) => { e.preventDefault(); if (almazOrder && !selectedMenuItem) return; onSave({ itemName, quantity, instructions, participantIds: assigned }); }}><div className="composer-title"><strong>{line ? "Edit item" : "Add an item"}</strong>{line && <button type="button" className="text-button" onClick={onCancel}>Cancel</button>}</div>{almazOrder ? <div className="field"><span>Item</span><AlmazMenuPicker value={itemName} onChange={setItemName} /></div> : <Field label="Item"><input list={`items-${order.id}`} value={itemName} onChange={(e) => setItemName(e.target.value)} maxLength={120} placeholder="What are you getting?" required /><datalist id={`items-${order.id}`}>{(recent.items[order.vendorName.toLowerCase()] ?? []).map((item) => <option key={item} value={item} />)}</datalist></Field>}<div className="quantity-row"><span>Quantity</span><div className="stepper"><button type="button" onClick={() => setQuantity((value) => Math.max(1, value - 1))}>−</button><input value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} type="number" min="1" max="999" inputMode="numeric" aria-label="Quantity" /><button type="button" onClick={() => setQuantity((value) => Math.min(999, value + 1))}>+</button></div></div><Field label="Changes or instructions" optional><textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} maxLength={500} placeholder={selectedMenuItem?.category === "Boxes" ? "Add the sandwich or breakfast choices here…" : "No onions, sauce on the side, less ice…"} />{recent.instructions.length > 0 && <div className="recent-chips">{recent.instructions.slice(0, 3).map((text) => <button type="button" key={text} onClick={() => setInstructions(text)}>{text}</button>)}</div>}</Field><div className="assignment"><div><span>For</span><button type="button" className="text-button" onClick={() => setAssigned(order.participants.map((person) => person.id))}>Everyone here</button></div><div className="people-chips">{order.participants.map((person) => <button type="button" key={person.id} className={assigned.includes(person.id) ? "person-chip selected" : "person-chip"} onClick={() => toggle(person.id)}><span>{person.nickname.slice(0, 1).toUpperCase()}</span>{person.isCurrentUser ? "Me" : person.nickname}</button>)}</div></div><button className="primary-button" disabled={disabled || !assigned.length || (almazOrder && !selectedMenuItem)}>{line ? "Save changes" : "Add to order"}</button></form>;
+  return <><form className="composer glass-card" onSubmit={(e) => { e.preventDefault(); if (almazOrder && !selectedMenuItem) return; onSave({ itemName, quantity, instructions, participantIds: assigned }); }}><div className="composer-title"><strong>{line ? "Edit item" : "Add an item"}</strong>{line && <button type="button" className="text-button" onClick={onCancel}>Cancel</button>}</div>{almazOrder ? <div className="field"><span>Item</span><AlmazMenuPicker value={itemName} onChange={setItemName} onBrowse={() => setFullMenuOpen(true)} /></div> : <Field label="Item"><input list={`items-${order.id}`} value={itemName} onChange={(e) => setItemName(e.target.value)} maxLength={120} placeholder="What are you getting?" required /><datalist id={`items-${order.id}`}>{(recent.items[order.vendorName.toLowerCase()] ?? []).map((item) => <option key={item} value={item} />)}</datalist></Field>}<div className="quantity-row"><span>Quantity</span><div className="stepper"><button type="button" onClick={() => setQuantity((value) => Math.max(1, value - 1))}>−</button><input value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} type="number" min="1" max="999" inputMode="numeric" aria-label="Quantity" /><button type="button" onClick={() => setQuantity((value) => Math.min(999, value + 1))}>+</button></div></div><Field label="Changes or instructions" optional><textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} maxLength={500} placeholder={selectedMenuItem?.category === "Boxes" ? "Add the sandwich or breakfast choices here…" : "No onions, sauce on the side, less ice…"} />{recent.instructions.length > 0 && <div className="recent-chips">{recent.instructions.slice(0, 3).map((text) => <button type="button" key={text} onClick={() => setInstructions(text)}>{text}</button>)}</div>}</Field><div className="assignment"><div><span>For</span><button type="button" className="text-button" onClick={() => setAssigned(order.participants.map((person) => person.id))}>Everyone here</button></div><div className="people-chips">{order.participants.map((person) => <button type="button" key={person.id} className={assigned.includes(person.id) ? "person-chip selected" : "person-chip"} onClick={() => toggle(person.id)}><span>{person.nickname.slice(0, 1).toUpperCase()}</span>{person.isCurrentUser ? "Me" : person.nickname}</button>)}</div></div><button className="primary-button" disabled={disabled || !assigned.length || (almazOrder && !selectedMenuItem)}>{line ? "Save changes" : "Add to order"}</button></form>{fullMenuOpen && createPortal(<FullMenuPage saving={disabled} onClose={() => setFullMenuOpen(false)} onConfirm={onAddMenuItems} />, document.body)}</>;
 }
 
 function LineCard({ line, participants, locked, onEdit, onRemove }: { line: OrderLine; participants: Participant[]; locked: boolean; onEdit: () => void; onRemove: () => void }) {
